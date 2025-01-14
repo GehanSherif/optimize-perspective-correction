@@ -95,10 +95,44 @@ def gradient_descent_optimizer(image, max_iters, initial_lr, decay_rate):
         if abs(prev_cost - cost) < 1e-5:
             break
         prev_cost = cost
+        # Transform and crop the image
+    top_left = np.dot(H1, [0, 0, 1])
+    top_right = np.dot(H1, [w, 0, 1])
+    bottom_left = np.dot(H1, [0, h, 1])
+    bottom_right = np.dot(H1, [w, h, 1])
 
-    return cost
+    points = [top_left, top_right, bottom_left, bottom_right]
+    image_crop = crop_black_border(cv2.warpPerspective(image.copy(), np.float32(H1), (2 * w, 2 * h)), points)
 
+    return image_crop, H1
 
+def similarity_score(edited_image, output_image= "output.jpg"):
+      import cv2
+
+      image1 = cv2.imread(edited_image)
+      image2 = cv2.imread(output_image)
+
+      sift = cv2.SIFT_create(nfeatures=15000)
+
+      keypoints1, descriptors1 = sift.detectAndCompute(image1, None)
+      keypoints2, descriptors2 = sift.detectAndCompute(image2, None)
+
+      index_params = dict(algorithm=1, trees=5)  
+      search_params = dict(checks=500)           # Higher = more accurate but slower
+
+      flann = cv2.FlannBasedMatcher(index_params, search_params)
+
+      matches = flann.knnMatch(descriptors1, descriptors2, k=2)
+
+      good_matches = []
+      for m, n in matches:
+          if m.distance < 0.7 * n.distance:  
+              good_matches.append(m)
+
+      similarity = len(good_matches) / max(len(keypoints1), len(keypoints2))
+
+      return -1* similarity
+      
 def total_error(params, raw_images, edited_images):
     initial_lr, decay_rate, max_iters = params
     total_mse = 0
@@ -110,7 +144,8 @@ def total_error(params, raw_images, edited_images):
         #raw_image = cv2.resize(raw_image, (600, 400))
         #edited_image = cv2.resize(edited_image, (600, 400))
 
-        cost = gradient_descent_optimizer(raw_image, int(max_iters), initial_lr, decay_rate)
+        gradient_descent_optimizer(raw_image, int(max_iters), initial_lr, decay_rate)
+        cost = similarity_score(edited_path)
         total_mse += cost
 
     return total_mse
@@ -119,17 +154,17 @@ def total_error(params, raw_images, edited_images):
 # Optimize hyperparameters
 if __name__ == "__main__":
     raw_images = ["/content/interior_data/train_A/"+i for i in sorted(os.listdir("/content/interior_data/train_A"))]  # Replace with your file paths
-    edited_images = ["/content/interior_data/train_B/"+i for i in sorted(os.listdir("/content/interior_data/train_B"))] 
+    edited_images = ["/content/interior_data/train_B/"+i for i in sorted(os.listdir("/content/interior_data/train_B"))]
 
-    initial_params = [0.01, 0.001, 10]  # Initial guess: [learning rate, decay rate, iterations]
-    bounds = [(0.01, 1.0), (0.001,0.1), (10, 1000)]  # Parameter bounds
+    initial_params = [0.01, 0.001, 5]  # Initial guess: [learning rate, decay rate, iterations]
+    bounds = [(0.01, 1.0), (0.001,0.1), (5, 100)]  # Parameter bounds
 
     result = minimize(
         total_error,
         initial_params,
         args=(raw_images, edited_images),
         bounds=bounds,
-        method='L-BFGS-B',
+        method='SLSQP',
         options={'disp': True}
     )
 
